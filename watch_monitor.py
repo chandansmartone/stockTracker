@@ -3,11 +3,12 @@ import os
 import re
 import smtplib
 import time
+from html import unescape
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 import requests
 from dotenv import load_dotenv
@@ -36,6 +37,7 @@ class CheckResult:
     title: str
     price_hint: Optional[str]
     color: Optional[str]
+    color_options: list[str]
 
 
 def now_iso() -> str:
@@ -107,6 +109,78 @@ def extract_color(html: str) -> Optional[str]:
         if sep.lower() in value.lower():
             value = value[: value.lower().find(sep.lower())].strip()
     return value or None
+
+
+def extract_color_options(html: str) -> list[str]:
+    text = " ".join(html.split())
+    match = re.search(r"Dial Color Options\s*:\s*([^<]{1,180})", text, flags=re.IGNORECASE)
+    if not match:
+        return []
+
+    raw = match.group(1)
+    raw = raw.replace("\\u003c", "<").replace("\\u003e", ">")
+    raw = unescape(raw)
+    raw = re.sub(r"<[^>]+>", " ", raw)
+
+    # Stop at next known section-ish label if it appears inline.
+    for stop in [" Strap Details", " Durability", " More Information", " Warranty", " Color:"]:
+        pos = raw.lower().find(stop.lower())
+        if pos != -1:
+            raw = raw[:pos]
+            break
+
+    parts = [p.strip() for p in re.split(r"/|,|\|", raw) if p.strip()]
+    blocked = {
+        "strap details",
+        "durability",
+        "warranty",
+        "more information",
+        "movement",
+        "display",
+        "details",
+    }
+    seen = set()
+    cleaned = []
+    for part in parts:
+        part = " ".join(part.split())
+        if not re.fullmatch(r"[A-Za-z][A-Za-z\- ]{0,24}", part):
+            continue
+        key = part.lower()
+        if key in blocked:
+            continue
+        if key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(part)
+    return cleaned
+
+
+def build_color_availability(
+    selected_color: Optional[str],
+    color_options: list[str],
+    status: str,
+) -> Dict[str, str]:
+    if not color_options and not selected_color:
+        return {}
+
+    availability: Dict[str, str] = {c: "unknown" for c in color_options}
+
+    if selected_color:
+        matched_key = None
+        for option in availability:
+            if option.lower() == selected_color.lower():
+                matched_key = option
+                break
+        if matched_key is None:
+            availability[selected_color] = status
+        else:
+            availability[matched_key] = status
+    elif len(availability) == 1:
+        # If only one variant is listed, map page status directly.
+        only_key = next(iter(availability))
+        availability[only_key] = status
+
+    return availability
 
 
 def get_urls_to_check() -> list[str]:
@@ -199,6 +273,12 @@ def build_alert(result: CheckResult, url: str) -> Tuple[str, str]:
     ]
     if result.color:
         body_lines.append(f"Color: {result.color}")
+    if result.color_options:
+        body_lines.append(f"Color options: {', '.join(result.color_options)}")
+    color_availability = build_color_availability(result.color, result.color_options, result.status)
+    if color_availability:
+        pairs = [f"{k}={v}" for k, v in color_availability.items()]
+        body_lines.append(f"Color availability: {', '.join(pairs)}")
     if result.price_hint:
         body_lines.append(f"Price hint: {result.price_hint}")
     body = "\n".join(body_lines)
@@ -253,18 +333,27 @@ def check_once() -> int:
         title = extract_title(html)
         price_hint = extract_price_hint(html)
         color = extract_color(html)
+        color_options = extract_color_options(html)
         result = CheckResult(
             status=status,
             reason=reason,
             title=title,
             price_hint=price_hint,
             color=color,
+            color_options=color_options,
         )
 
         print(f"Checked at {now_iso()}")
         print(f"URL: {url}")
         print(f"Title: {title}")
         print(f"Color: {color or 'unknown'}")
+        print(f"Color options: {', '.join(color_options) if color_options else 'not found'}")
+        color_availability = build_color_availability(color, color_options, status)
+        if color_availability:
+            print(
+                "Color availability: "
+                + ", ".join([f"{k}={v}" for k, v in color_availability.items()])
+            )
         print(f"Status: {status}")
         print(f"Reason: {reason}")
 
@@ -301,6 +390,7 @@ def check_once() -> int:
             "last_reason": reason,
             "title": title,
             "color": color,
+            "color_options": color_options,
             "last_checked_at": now_iso(),
             "url": url,
         }
