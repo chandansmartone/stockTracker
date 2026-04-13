@@ -32,6 +32,7 @@ jobs:
       - name: Run checker
         env:
           PRODUCT_URL: ${{ secrets.PRODUCT_URL }}
+          PRODUCT_URLS: ${{ secrets.PRODUCT_URLS }}
           MODE: once
           REQUEST_TIMEOUT_SECONDS: "12"
           STATE_FILE: .stock_state.json

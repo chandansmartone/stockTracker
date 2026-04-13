@@ -62,6 +62,7 @@ Set these in `.env`:
 
 Create these GitHub repository secrets:
 - `PRODUCT_URL`
+- `PRODUCT_URLS` (optional, comma/newline separated; overrides `PRODUCT_URL`)
 - `SMTP_HOST`
 - `SMTP_PORT`
 - `SMTP_USERNAME`
@@ -89,6 +90,7 @@ Then push this project to GitHub. The workflow in `.github/workflows/stock-check
 - If page contains `out of stock`, `sold out`, etc. -> `unavailable`
 - Else if page contains `add to cart` or `buy now` -> `available`
 - Else -> `unknown`
+- Alerts include checked product URL and detected color (if present on page, e.g. `Color: Silver`)
 
 Current page snapshot includes `Out of Stock`, so it should currently show `unavailable`.
 

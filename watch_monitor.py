@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import smtplib
 import time
 from dataclasses import dataclass
@@ -34,6 +35,7 @@ class CheckResult:
     reason: str
     title: str
     price_hint: Optional[str]
+    color: Optional[str]
 
 
 def now_iso() -> str:
@@ -92,6 +94,31 @@ def extract_price_hint(html: str) -> Optional[str]:
         return None
     snippet = html[idx : idx + 24]
     return " ".join(snippet.split())
+
+
+def extract_color(html: str) -> Optional[str]:
+    text = " ".join(html.split())
+    match = re.search(r"Color\s*:\s*([A-Za-z0-9/\- ]{1,40})", text, flags=re.IGNORECASE)
+    if not match:
+        return None
+    value = match.group(1).strip()
+    # Stop at common separators if page has inline labels after color.
+    for sep in [" Out of Stock", " ADD TO CART", " BUY NOW", " Secure Payments"]:
+        if sep.lower() in value.lower():
+            value = value[: value.lower().find(sep.lower())].strip()
+    return value or None
+
+
+def get_urls_to_check() -> list[str]:
+    urls_blob = os.getenv("PRODUCT_URLS", "").strip()
+    if urls_blob:
+        parts = re.split(r"[,\n]+", urls_blob)
+        urls = [p.strip() for p in parts if p.strip()]
+        if urls:
+            return urls
+
+    single = os.getenv("PRODUCT_URL", "").strip()
+    return [single] if single else []
 
 
 def detect_stock(html: str) -> Tuple[str, str]:
@@ -170,6 +197,8 @@ def build_alert(result: CheckResult, url: str) -> Tuple[str, str]:
         f"URL: {url}",
         f"Checked at (UTC): {now_iso()}",
     ]
+    if result.color:
+        body_lines.append(f"Color: {result.color}")
     if result.price_hint:
         body_lines.append(f"Price hint: {result.price_hint}")
     body = "\n".join(body_lines)
@@ -177,9 +206,9 @@ def build_alert(result: CheckResult, url: str) -> Tuple[str, str]:
 
 
 def check_once() -> int:
-    url = os.getenv("PRODUCT_URL", "").strip()
-    if not url:
-        print("ERROR: PRODUCT_URL is required.")
+    urls = get_urls_to_check()
+    if not urls:
+        print("ERROR: Set PRODUCT_URL or PRODUCT_URLS.")
         return 2
 
     force_test_email = os.getenv("FORCE_TEST_EMAIL", "false").lower() == "true"
@@ -188,7 +217,7 @@ def check_once() -> int:
         body = (
             "This is a forced test email from deployment.\n\n"
             f"Checked at (UTC): {now_iso()}\n"
-            f"Product URL: {url}\n"
+            f"Product URLs: {', '.join(urls)}\n"
             "No stock transition is required for this test."
         )
         try:
@@ -206,64 +235,80 @@ def check_once() -> int:
     alert_on_unknown = os.getenv("ALERT_ON_UNKNOWN", "false").lower() == "true"
 
     state = load_state(state_file)
-    prev_status = state.get("last_status")
+    state_items = state.get("items", {})
+    any_fetch_error = False
 
-    try:
-        html = fetch_page(url, timeout_seconds=timeout_seconds)
-    except Exception as exc:
-        print(f"ERROR: Could not fetch page: {exc}")
-        return 1
-
-    status, reason = detect_stock(html)
-    title = extract_title(html)
-    price_hint = extract_price_hint(html)
-    result = CheckResult(status=status, reason=reason, title=title, price_hint=price_hint)
-
-    print(f"Checked at {now_iso()}")
-    print(f"Title: {title}")
-    print(f"Status: {status}")
-    print(f"Reason: {reason}")
-
-    should_alert = False
-    if status == "available" and prev_status != "available":
-        should_alert = True
-    if status == "unknown" and alert_on_unknown and prev_status != "unknown":
-        should_alert = True
-
-    if should_alert:
-        subject, body = build_alert(result, url)
-        delivered = []
+    for url in urls:
+        prev = state_items.get(url, {})
+        prev_status = prev.get("last_status")
 
         try:
-            if send_email(subject, body):
-                delivered.append("email")
+            html = fetch_page(url, timeout_seconds=timeout_seconds)
         except Exception as exc:
-            print(f"WARN: Email alert failed: {exc}")
+            any_fetch_error = True
+            print(f"ERROR: Could not fetch page for {url}: {exc}")
+            continue
 
-        try:
-            sms_text = body if len(body) <= 1500 else body[:1497] + "..."
-            if send_twilio_sms(sms_text):
-                delivered.append("sms")
-        except Exception as exc:
-            print(f"WARN: SMS alert failed: {exc}")
+        status, reason = detect_stock(html)
+        title = extract_title(html)
+        price_hint = extract_price_hint(html)
+        color = extract_color(html)
+        result = CheckResult(
+            status=status,
+            reason=reason,
+            title=title,
+            price_hint=price_hint,
+            color=color,
+        )
 
-        if delivered:
-            print(f"ALERT SENT via {', '.join(delivered)}")
-        else:
-            print("WARN: Stock changed but no alert channel is configured correctly.")
+        print(f"Checked at {now_iso()}")
+        print(f"URL: {url}")
+        print(f"Title: {title}")
+        print(f"Color: {color or 'unknown'}")
+        print(f"Status: {status}")
+        print(f"Reason: {reason}")
 
-    state.update(
-        {
+        should_alert = False
+        if status == "available" and prev_status != "available":
+            should_alert = True
+        if status == "unknown" and alert_on_unknown and prev_status != "unknown":
+            should_alert = True
+
+        if should_alert:
+            subject, body = build_alert(result, url)
+            delivered = []
+
+            try:
+                if send_email(subject, body):
+                    delivered.append("email")
+            except Exception as exc:
+                print(f"WARN: Email alert failed for {url}: {exc}")
+
+            try:
+                sms_text = body if len(body) <= 1500 else body[:1497] + "..."
+                if send_twilio_sms(sms_text):
+                    delivered.append("sms")
+            except Exception as exc:
+                print(f"WARN: SMS alert failed for {url}: {exc}")
+
+            if delivered:
+                print(f"ALERT SENT via {', '.join(delivered)} for {url}")
+            else:
+                print(f"WARN: Stock changed but no alert channel is configured correctly for {url}.")
+
+        state_items[url] = {
             "last_status": status,
             "last_reason": reason,
             "title": title,
+            "color": color,
             "last_checked_at": now_iso(),
             "url": url,
         }
-    )
+
+    state["items"] = state_items
     save_state(state_file, state)
 
-    return 0
+    return 1 if any_fetch_error else 0
 
 
 def main() -> int:
