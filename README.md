@@ -1,6 +1,6 @@
 # HMT Watch Stock Monitor
 
-Fast stock checker for this product:
+Fast stock checker for this product you change it to any:
 - https://www.hmtwatches.store/product/bc27db38-fcc7-44bc-8c51-325c43ef58bd
 
 It checks the page text for stock markers and alerts you when status changes to **available**.
