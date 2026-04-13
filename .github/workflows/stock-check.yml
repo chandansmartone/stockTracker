@@ -44,6 +44,7 @@ jobs:
           ALERT_EMAIL_FROM: ${{ secrets.ALERT_EMAIL_FROM }}
           ALERT_EMAIL_TO: ${{ secrets.ALERT_EMAIL_TO }}
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+          FORCE_TEST_EMAIL: ${{ secrets.FORCE_TEST_EMAIL }}
 
           TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
           TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}

@@ -182,6 +182,25 @@ def check_once() -> int:
         print("ERROR: PRODUCT_URL is required.")
         return 2
 
+    force_test_email = os.getenv("FORCE_TEST_EMAIL", "false").lower() == "true"
+    if force_test_email:
+        subject = "TEST ALERT: HMT Stock Monitor"
+        body = (
+            "This is a forced test email from deployment.\n\n"
+            f"Checked at (UTC): {now_iso()}\n"
+            f"Product URL: {url}\n"
+            "No stock transition is required for this test."
+        )
+        try:
+            if send_email(subject, body):
+                print("TEST EMAIL SENT")
+                return 0
+            print("ERROR: Email settings are incomplete. Test email not sent.")
+            return 1
+        except Exception as exc:
+            print(f"ERROR: Test email failed: {exc}")
+            return 1
+
     timeout_seconds = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "12"))
     state_file = Path(os.getenv("STATE_FILE", ".stock_state.json"))
     alert_on_unknown = os.getenv("ALERT_ON_UNKNOWN", "false").lower() == "true"

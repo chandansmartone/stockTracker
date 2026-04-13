@@ -69,12 +69,20 @@ Create these GitHub repository secrets:
 - `ALERT_EMAIL_FROM`
 - `ALERT_EMAIL_TO`
 - `SMTP_USE_TLS`
+- `FORCE_TEST_EMAIL` (optional, set to `true` for one test run)
 - `TWILIO_ACCOUNT_SID` (optional)
 - `TWILIO_AUTH_TOKEN` (optional)
 - `TWILIO_FROM_NUMBER` (optional)
 - `ALERT_SMS_TO` (optional)
 
 Then push this project to GitHub. The workflow in `.github/workflows/stock-check.yml` runs every 5 minutes.
+
+### Test Run After Deploy
+
+1. Set repository secret `FORCE_TEST_EMAIL=true`.
+2. Run workflow manually from GitHub Actions (`workflow_dispatch`).
+3. Check logs for `TEST EMAIL SENT` and verify inbox delivery.
+4. Set `FORCE_TEST_EMAIL=false` (or delete the secret) after successful testing.
 
 ## Detection Logic
 
